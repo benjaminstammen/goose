@@ -4,11 +4,29 @@ use aws_sdk_s3::{Client, Config, Credentials, Endpoint, Region};
 use data_encoding::HEXLOWER;
 use ring::digest::{Context, Digest, SHA256};
 use std::fs::File;
-use std::io::{BufRead, BufReader, Read, Result as IOResult};
+use std::io::{BufRead, BufReader, Read, Result as IOResult, Write};
 use std::path::Path;
 use std::{env, fs};
 use uuid::Uuid;
 
+#[derive(Debug)]
+enum HashType {
+    SHA256,
+}
+
+#[derive(Debug)]
+struct Hash {
+    pub hash_value: String,
+    pub hash_type: HashType,
+}
+
+#[derive(Debug)]
+struct MotherGoose {
+    pub hash: Hash,
+    pub goslings: Vec<Gosling>,
+}
+
+#[derive(Debug)]
 struct Gosling {
     pub id: String,
     pub content_length: usize,
@@ -31,13 +49,13 @@ pub async fn file_gooser(file_path: &str, gosling_size: usize) -> Result<()> {
     let mut goslings = Vec::new();
     let mut reader = BufReader::with_capacity(gosling_size, file);
 
-    let s3_client = build_client().await;
+    // let s3_client = build_client().await;
 
     loop {
         let length = {
             let buffer = reader.fill_buf().expect("Error reading file!");
             let gosling = spawn_gosling_for_buffer(buffer, file_path);
-            upload_file(&s3_client, &gosling).await?;
+            // upload_file(&s3_client, &gosling).await?;
             goslings.push(gosling);
             buffer.len()
         };
@@ -47,13 +65,19 @@ pub async fn file_gooser(file_path: &str, gosling_size: usize) -> Result<()> {
         reader.consume(length);
         // TODO: Better progress indicator
         print!(".");
+        let _ = std::io::stdout().flush();
     }
     println!("Finished spawning goslings.");
 
-    println!(
-        "{}",
-        sha256_digest_for_file(file_path).expect("Failed to compute hash")
-    );
+    let file_hash = Hash {
+        hash_value: sha256_digest_for_file(file_path).expect("Failed to compute hash"),
+        hash_type: HashType::SHA256,
+    };
+    let mother_goose = MotherGoose {
+        hash: file_hash,
+        goslings,
+    };
+    println!("Mother goose says wak: {:#?}", mother_goose);
     Ok(())
 }
 

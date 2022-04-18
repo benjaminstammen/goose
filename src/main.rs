@@ -8,5 +8,7 @@ async fn main() {
 
     let args: Vec<String> = env::args().collect();
     let file_path = &args[1];
-    file_gooser(file_path, DEFAULT_GOSLING_SIZE).await.expect("Failure.");
+    file_gooser(file_path, DEFAULT_GOSLING_SIZE)
+        .await
+        .expect("Failure.");
 }
