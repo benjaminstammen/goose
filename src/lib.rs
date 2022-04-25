@@ -24,26 +24,19 @@ struct Hash {
 #[derive(Debug, Serialize, Deserialize)]
 struct MotherGoose {
     pub id: String,
-    pub file_path: String,
-    pub hash: Hash,
     pub goslings: Vec<Gosling>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Gosling {
     pub id: String,
-    pub content_length: usize,
-    pub file_path: String,
 }
 
-impl Gosling {
-    pub fn new(id: String, content_length: usize, file_path: String) -> Gosling {
-        Gosling {
-            id,
-            content_length,
-            file_path,
-        }
-    }
+struct LocalFile {
+    pub file_name: String,
+    pub file_dir: String,
+    pub content_length: usize,
+    pub checksum: Option<Hash>,
 }
 
 pub async fn file_gooser(file_path: &str, gosling_size: usize) -> Result<()> {
@@ -54,8 +47,8 @@ pub async fn file_gooser(file_path: &str, gosling_size: usize) -> Result<()> {
 
     let s3_client = build_client().await;
 
-    let gosling_dir = format!("{}.d", file_path);
-    fs::create_dir_all(&gosling_dir)?;
+    let working_dir = format!("{}.d", file_path);
+    fs::create_dir_all(&working_dir)?;
 
     loop {
         let buffer = reader.fill_buf().expect("Error reading file!");
@@ -64,9 +57,11 @@ pub async fn file_gooser(file_path: &str, gosling_size: usize) -> Result<()> {
             break;
         }
 
-        let gosling = spawn_gosling_for_buffer(buffer, &gosling_dir);
-        upload_gosling(&s3_client, &gosling).await?;
-        goslings.push(gosling);
+        let gosling_file = create_gosling_file(buffer, &working_dir)?;
+        upload_file(&s3_client, &gosling_file).await?;
+        goslings.push(Gosling {
+            id: gosling_file.file_name.clone(),
+        });
 
         reader.consume(length);
         // TODO: Better progress indicator
@@ -75,33 +70,38 @@ pub async fn file_gooser(file_path: &str, gosling_size: usize) -> Result<()> {
     }
     println!("Finished spawning goslings.");
 
-    // TODO: This is weird. We're serializing an object and writing out a file that describes
-    //  itself. Really, there should be a LocalFile object or something that gets uploaded and then
-    //  a cloud-aware Goose/Gosling object that can resolve to a LocalFile if there's one present.
-    let mother_goose_id = format!("{}.goose", Uuid::new_v4());
-    let mother_goose_path = format!("{}/{}.goose", &gosling_dir, Uuid::new_v4());
-    let file_hash = Hash {
-        hash_value: sha256_digest_for_file(file_path).expect("Failed to compute hash"),
-        hash_type: HashType::SHA256,
-    };
     let mother_goose = MotherGoose {
-        id: mother_goose_id,
-        file_path: mother_goose_path,
-        hash: file_hash,
+        id: format!("{}.goose", Uuid::new_v4()),
         goslings,
     };
-    let serialized_mother_goose = serde_json::to_string(&mother_goose)?;
-    fs::write(&mother_goose.file_path, &serialized_mother_goose).expect("Unable to write file");
-    upload_mother_goose(&s3_client, &mother_goose).await?;
-    println!("Mother goose says wak: {:#?}", &serialized_mother_goose);
+    let serialized_goose = serde_json::to_vec(&mother_goose)?;
+    let goose_file =
+        write_file_from_buffer(serialized_goose.as_slice(), &working_dir, &mother_goose.id)?;
+    upload_file(&s3_client, &goose_file).await?;
+    println!("Mother goose says wak: {:#?}", &mother_goose);
     Ok(())
 }
 
-fn spawn_gosling_for_buffer(buffer: &[u8], write_dir: &str) -> Gosling {
+fn create_gosling_file(buffer: &[u8], write_dir: &str) -> Result<LocalFile> {
     let gosling_name = format!("{}.gosling", Uuid::new_v4());
-    let gosling_path = format!("{}/{}", write_dir, gosling_name);
-    fs::write(&gosling_path, buffer).expect("Unable to write file");
-    Gosling::new(gosling_name, buffer.len(), gosling_path)
+    write_file_from_buffer(buffer, write_dir, &gosling_name)
+}
+
+// TODO: (optionally?) stream bytes through checksum algorithm so that it's always present on the
+//   resulting object.
+fn write_file_from_buffer(buffer: &[u8], write_dir: &str, file_name: &str) -> Result<LocalFile> {
+    let path = format!("{}/{}", write_dir, file_name);
+    fs::write(&path, buffer)?;
+    let digest = sha256_digest_for_file(&path)?;
+    Ok(LocalFile {
+        file_name: String::from(file_name),
+        file_dir: String::from(write_dir),
+        content_length: buffer.len(),
+        checksum: Some(Hash {
+            hash_value: digest,
+            hash_type: HashType::SHA256,
+        }),
+    })
 }
 
 fn sha256_digest_for_file(file_path: &str) -> IOResult<String> {
@@ -133,40 +133,20 @@ async fn build_client() -> Client {
     Client::from_conf(config)
 }
 
-async fn upload_mother_goose(client: &Client, mother_goose: &MotherGoose) -> Result<()> {
-    upload_file(client, &mother_goose.file_path, &mother_goose.id, None).await
-}
-
-async fn upload_gosling(client: &Client, gosling: &Gosling) -> Result<()> {
-    upload_file(
-        client,
-        &gosling.file_path,
-        &gosling.id,
-        Some(gosling.content_length as i64),
-    )
-    .await
-}
-
-async fn upload_file(
-    client: &Client,
-    source_file_path: &str,
-    destination_key: &str,
-    content_length: Option<i64>,
-) -> Result<()> {
+async fn upload_file(client: &Client, local_file: &LocalFile) -> Result<()> {
     let bucket_name =
         env::var("GOOSE_B2_UPLOAD_BUCKET").expect("Need GOOSE_B2_UPLOAD_BUCKET set for now.");
-    let body = ByteStream::from_path(Path::new(&source_file_path)).await;
-    let mut builder = client
+
+    let full_path = format!("{}/{}", local_file.file_dir, local_file.file_name);
+    let body = ByteStream::from_path(Path::new(&full_path)).await;
+    client
         .put_object()
         .bucket(bucket_name)
-        .key(destination_key)
-        .body(body.unwrap());
-    // Content length is optional for now
-    // TODO: should it always be provided?
-    if content_length.is_some() {
-        builder = builder.content_length(content_length.unwrap());
-    }
-    builder.send().await?;
+        .key(&local_file.file_name)
+        .content_length(local_file.content_length as i64)
+        .body(body.unwrap())
+        .send()
+        .await?;
     Ok(())
 }
 
