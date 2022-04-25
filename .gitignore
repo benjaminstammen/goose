@@ -1,3 +1,5 @@
 /target
 credentials.sh
 example*
+.idea
+.idea/*
