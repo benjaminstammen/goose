@@ -3,7 +3,7 @@ use std::env;
 
 #[tokio::main]
 async fn main() {
-    // 4MB seems like a decent choice for chunk size?
+    // 40MB seems like a decent choice for chunk size?
     const DEFAULT_GOSLING_SIZE: usize = 1024 * 1024 * 40;
 
     let args: Vec<String> = env::args().collect();
