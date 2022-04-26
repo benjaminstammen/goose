@@ -5,7 +5,7 @@ use data_encoding::HEXLOWER;
 use ring::digest::{Context, Digest, SHA256};
 use serde::{Deserialize, Serialize};
 use std::fs::File;
-use std::io::{BufRead, BufReader, Read, Result as IOResult, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::{env, fs};
 use uuid::Uuid;
@@ -25,18 +25,20 @@ struct Hash {
 struct MotherGoose {
     pub id: String,
     pub goslings: Vec<Gosling>,
+    pub checksum: Hash,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Gosling {
     pub id: String,
+    pub checksum: Hash,
 }
 
 struct LocalFile {
     pub file_name: String,
     pub file_dir: String,
     pub content_length: usize,
-    pub checksum: Option<Hash>,
+    pub checksum: Hash,
 }
 
 pub async fn file_gooser(file_path: &str, gosling_size: usize) -> Result<()> {
@@ -50,6 +52,7 @@ pub async fn file_gooser(file_path: &str, gosling_size: usize) -> Result<()> {
     let working_dir = format!("{}.d", file_path);
     fs::create_dir_all(&working_dir)?;
 
+    let mut hash_context = Context::new(&SHA256);
     loop {
         let buffer = reader.fill_buf().expect("Error reading file!");
         let length = buffer.len();
@@ -57,10 +60,12 @@ pub async fn file_gooser(file_path: &str, gosling_size: usize) -> Result<()> {
             break;
         }
 
+        hash_context.update(buffer);
         let gosling_file = create_gosling_file(buffer, &working_dir)?;
         upload_file(&s3_client, &gosling_file).await?;
         goslings.push(Gosling {
             id: gosling_file.file_name.clone(),
+            checksum: gosling_file.checksum,
         });
 
         reader.consume(length);
@@ -73,6 +78,7 @@ pub async fn file_gooser(file_path: &str, gosling_size: usize) -> Result<()> {
     let mother_goose = MotherGoose {
         id: format!("{}.goose", Uuid::new_v4()),
         goslings,
+        checksum: finalize_hash(hash_context.finish(), HashType::SHA256),
     };
     let serialized_goose = serde_json::to_vec(&mother_goose)?;
     let goose_file =
@@ -87,28 +93,15 @@ fn create_gosling_file(buffer: &[u8], write_dir: &str) -> Result<LocalFile> {
     write_file_from_buffer(buffer, write_dir, &gosling_name)
 }
 
-// TODO: (optionally?) stream bytes through checksum algorithm so that it's always present on the
-//   resulting object.
 fn write_file_from_buffer(buffer: &[u8], write_dir: &str, file_name: &str) -> Result<LocalFile> {
     let path = format!("{}/{}", write_dir, file_name);
     fs::write(&path, buffer)?;
-    let digest = sha256_digest_for_file(&path)?;
     Ok(LocalFile {
         file_name: String::from(file_name),
         file_dir: String::from(write_dir),
         content_length: buffer.len(),
-        checksum: Some(Hash {
-            hash_value: digest,
-            hash_type: HashType::SHA256,
-        }),
+        checksum: sha256_digest(buffer),
     })
-}
-
-fn sha256_digest_for_file(file_path: &str) -> IOResult<String> {
-    let input = File::open(file_path)?;
-    let reader = BufReader::new(input);
-    let digest = sha256_digest(reader)?;
-    Ok(HEXLOWER.encode(digest.as_ref()))
 }
 
 async fn build_client() -> Client {
@@ -150,20 +143,15 @@ async fn upload_file(client: &Client, local_file: &LocalFile) -> Result<()> {
     Ok(())
 }
 
-// Lifted from the Rust Cookbook here: https://rust-lang-nursery.github.io/rust-cookbook/cryptography/hashing.html
-// TODO: find a way to compute the hash rapidly while creating goslings. Not doing so now because it's been
-//     prohibitively slow.
-fn sha256_digest<R: Read>(mut reader: R) -> IOResult<Digest> {
+fn sha256_digest(bytes: &[u8]) -> Hash {
     let mut context = Context::new(&SHA256);
-    let mut buffer = [0; 1024];
+    context.update(bytes);
+    finalize_hash(context.finish(), HashType::SHA256)
+}
 
-    loop {
-        let count = reader.read(&mut buffer)?;
-        if count == 0 {
-            break;
-        }
-        context.update(&buffer[..count]);
+fn finalize_hash(digest: Digest, hash_type: HashType) -> Hash {
+    Hash {
+        hash_value: HEXLOWER.encode(digest.as_ref()),
+        hash_type,
     }
-
-    Ok(context.finish())
 }
