@@ -13,6 +13,7 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::{env, fs};
+use url::Url;
 use uuid::Uuid;
 use zeroize::Zeroize;
 
@@ -95,6 +96,10 @@ pub async fn file_gooser(file_path: &str, gosling_size: usize) -> Result<()> {
     upload_file(&s3_client, &goose_file).await?;
     println!("Mother goose says wak: {:#?}", &mother_goose);
     Ok(())
+}
+
+pub async fn file_ungooser(_goose_url: Url) {
+    println!("TODO: ungooser implementation")
 }
 
 fn create_encryption(password: &str, salt: &[u8; 32]) -> Result<XChaCha20Poly1305> {
