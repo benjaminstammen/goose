@@ -1,6 +1,9 @@
 use clap::{Parser, Subcommand};
+use dialoguer::{Input, Password};
+use dialoguer::theme::ColorfulTheme;
 use goose::file_gooser;
 use url::Url;
+use zeroize::Zeroize;
 
 #[derive(Parser)]
 #[clap(name = "goose")]
@@ -38,11 +41,11 @@ async fn upload_impl(file_path: std::path::PathBuf) {
     // 40MB seems like a decent choice for chunk size?
     const DEFAULT_GOSLING_SIZE: usize = 1024 * 1024 * 40;
 
-    //let args: Vec<String> = env::args().collect();
-    //let file_path = &args[1];
-    file_gooser(file_path.to_str().unwrap(), DEFAULT_GOSLING_SIZE)
+    let mut password = password_prompt();
+    file_gooser(file_path.to_str().unwrap(), DEFAULT_GOSLING_SIZE, &password)
         .await
         .expect("Failure.");
+    password.zeroize()
 }
 
 async fn download_impl(goose_url: String) {
@@ -51,4 +54,12 @@ async fn download_impl(goose_url: String) {
         scheme if (scheme == "http" || scheme == "https") => println!("Workable scheme!"),
         _ => println!("Scheme is unknown - will not continue."),
     }
+}
+
+fn password_prompt() -> String {
+    Password::new()
+        .with_prompt("Encryption Password")
+        .with_confirmation("Confirm Password", "Password Mismatch")
+        .interact()
+        .expect("Failed to retrieve password, exiting.")
 }

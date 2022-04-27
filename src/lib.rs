@@ -48,7 +48,7 @@ struct LocalFile {
     pub checksum: Hash,
 }
 
-pub async fn file_gooser(file_path: &str, gosling_size: usize) -> Result<()> {
+pub async fn file_gooser(file_path: &str, gosling_size: usize, password: &str) -> Result<()> {
     let file = File::open(file_path)?;
 
     let mut goslings = Vec::new();
@@ -57,7 +57,7 @@ pub async fn file_gooser(file_path: &str, gosling_size: usize) -> Result<()> {
     let s3_client = build_client().await;
     let mut salt = [0u8; 32];
     thread_rng().fill_bytes(&mut salt);
-    let encryption = create_encryption("password", &salt)?;
+    let encryption = create_encryption(password, &salt)?;
 
     let working_dir = format!("{}.d", file_path);
     fs::create_dir_all(&working_dir)?;
