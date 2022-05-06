@@ -98,9 +98,16 @@ pub async fn file_gooser(file_path: &str, gosling_size: usize, password: &str) -
     Ok(())
 }
 
-pub async fn file_ungooser(goose_url: &Url) -> Result<()> {
+pub async fn file_ungooser(
+    goose_url: &Url,
+    _destination_path: &str,
+    _password: &str,
+) -> Result<()> {
     let response = reqwest::get(goose_url.clone()).await?;
-    let goose_path = format!("/tmp/{}", goose_url.path_segments().unwrap().last().unwrap());
+    let goose_path = format!(
+        "/tmp/{}",
+        goose_url.path_segments().unwrap().last().unwrap()
+    );
     let mut file = File::create(Path::new(&goose_path))?;
     let mut content = Cursor::new(response.bytes().await?);
     std::io::copy(&mut content, &mut file)?;

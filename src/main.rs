@@ -1,7 +1,6 @@
 use clap::{Parser, Subcommand};
-use dialoguer::{Input, Password};
-use dialoguer::theme::ColorfulTheme;
-use goose::file_gooser;
+use dialoguer::Password;
+use goose::{file_gooser, file_ungooser};
 use url::Url;
 use zeroize::Zeroize;
 
@@ -23,8 +22,11 @@ enum Commands {
     },
     #[clap(arg_required_else_help = true)]
     Download {
+        /// The remote goose URL
         #[clap(long)]
         goose_url: String,
+        #[clap(long, parse(from_os_str))]
+        destination_path: std::path::PathBuf,
     },
 }
 
@@ -33,7 +35,10 @@ async fn main() {
     let args = Goose::parse();
     match args.command {
         Commands::Upload { file_path } => upload_impl(file_path).await,
-        Commands::Download { goose_url } => download_impl(goose_url).await,
+        Commands::Download {
+            goose_url,
+            destination_path,
+        } => download_impl(goose_url, destination_path).await,
     }
 }
 
@@ -48,11 +53,19 @@ async fn upload_impl(file_path: std::path::PathBuf) {
     password.zeroize()
 }
 
-async fn download_impl(goose_url: String) {
+async fn download_impl(goose_url: String, destination_path: std::path::PathBuf) {
     let url = Url::parse(goose_url.as_str()).expect("URL cannot be parsed");
     match url.scheme() {
-        scheme if (scheme == "http" || scheme == "https") => println!("Workable scheme!"),
-        _ => println!("Scheme is unknown - will not continue."),
+        scheme if (scheme == "http" || scheme == "https") => {
+            let mut password = password_prompt();
+            file_ungooser(&url, destination_path.to_str().unwrap(), &password)
+                .await
+                .unwrap();
+            password.zeroize();
+        }
+        _ => {
+            println!("Scheme is unknown - will not continue.")
+        }
     }
 }
 
