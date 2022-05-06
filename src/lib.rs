@@ -10,7 +10,7 @@ use rand::prelude::*;
 use ring::digest::{Context, Digest, SHA256};
 use serde::{Deserialize, Serialize};
 use std::fs::File;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Cursor, Write};
 use std::path::Path;
 use std::{env, fs};
 use url::Url;
@@ -98,8 +98,13 @@ pub async fn file_gooser(file_path: &str, gosling_size: usize, password: &str) -
     Ok(())
 }
 
-pub async fn file_ungooser(_goose_url: Url) {
-    println!("TODO: ungooser implementation")
+pub async fn file_ungooser(goose_url: &Url) -> Result<()> {
+    let response = reqwest::get(goose_url.clone()).await?;
+    let goose_path = format!("/tmp/{}", goose_url.path_segments().unwrap().last().unwrap());
+    let mut file = File::create(Path::new(&goose_path))?;
+    let mut content = Cursor::new(response.bytes().await?);
+    std::io::copy(&mut content, &mut file)?;
+    Ok(())
 }
 
 fn create_encryption(password: &str, salt: &[u8; 32]) -> Result<XChaCha20Poly1305> {
