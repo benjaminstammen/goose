@@ -3,3 +3,4 @@ credentials.sh
 example*
 .idea
 .idea/*
+*.goose
