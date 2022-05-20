@@ -91,8 +91,13 @@ pub async fn file_gooser(file_path: &str, gosling_size: usize, password: &str) -
         checksum: finalize_hash(hash_context.finish(), HashType::SHA256),
     };
     let serialized_goose = serde_json::to_vec(&mother_goose)?;
-    let goose_file =
-        write_file_from_buffer(serialized_goose.as_slice(), &working_dir, &mother_goose.id)?;
+    let goose_file = write_encrypted_file_from_buffer(
+        serialized_goose.as_slice(),
+        &working_dir,
+        &mother_goose.id,
+        &encryption,
+        &salt,
+    )?;
     upload_file(&s3_client, &goose_file).await?;
     println!("Mother goose says wak: {:#?}", &mother_goose);
     Ok(())
